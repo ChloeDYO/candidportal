@@ -1,9 +1,9 @@
-CANDID PORTAL - CURSOR IMPLEMENTATION GUIDE
+CANDIDIQ - CURSOR IMPLEMENTATION GUIDE
 ================================================================================
 
 OVERVIEW
 This guide walks you through importing customer data, files, and deals into 
-your Candid Portal built in Cursor. We're using Supabase as the database and 
+your CandidIQ built in Cursor. We're using Supabase as the database and 
 file storage.
 
 ================================================================================
@@ -686,7 +686,7 @@ export default function ImportPage() {
 
   return (
     <div style={{ padding: '20px' }}>
-      <h1>Import Data to Candid Portal</h1>
+      <h1>Import Data to CandidIQ</h1>
       
       <div style={{ marginBottom: '20px' }}>
         <button 

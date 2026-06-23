@@ -1,6 +1,6 @@
 # Developer setup
 
-Coworkers can run the Candid portal against the shared Supabase project without local Excel files, JSON imports, or PDF folders.
+Coworkers can run the CandidIQ against the shared Supabase project without local Excel files, JSON imports, or PDF folders.
 
 ## Prerequisites
 

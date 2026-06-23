@@ -1,7 +1,7 @@
-CANDID PORTAL IMPLEMENTATION - COMPLETE PACKAGE
+CANDIDIQ IMPLEMENTATION - COMPLETE PACKAGE
 ================================================================================
 
-You now have everything you need to build and populate the Candid Portal.
+You now have everything you need to build and populate the CandidIQ.
 
 FILES CREATED FOR YOU:
 ================================================================================
@@ -109,7 +109,7 @@ WHAT YOU'LL HAVE WHEN DONE:
   ├─ File storage for documents (contracts, LOAs, invoices)
   └─ All relationships connected
 
-✅ CANDID PORTAL INTERFACE
+✅ CANDIDIQ INTERFACE
   ├─ Customer Dashboard (view all customers, MRR, deals)
   ├─ Customer Detail (locations, contacts, services, documents)
   ├─ Deal Detail (cost, contract dates, renewals, documents)

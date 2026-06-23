@@ -5,13 +5,23 @@ import {
   DEAL_STATUS_OPTIONS,
   PAY_SOURCE_OPTIONS,
   RECORD_KIND_OPTIONS,
-  parseContractHintsFromFile,
   type CandidContractRecord,
   type CustomerDocument,
   type DealStatus,
   type RecordKind,
 } from '@/lib/customer-records';
-import type { Location } from '@/components/CustomersView';
+import type { Customer, Location } from '@/components/CustomersView';
+import {
+  guessRecordKindFromFile,
+  parseCustomerDocumentFromFile,
+} from '@/lib/customer-document-extract';
+import { parseContractDocumentFromFile } from '@/lib/contract-document-extract';
+import {
+  buildAccountEnrichment,
+  formatAccountEnrichmentNote,
+  hasAccountEnrichment,
+  type AccountEnrichment,
+} from '@/lib/customer-account-enrich';
 
 const BRAND = {
   red: '#C8281E',
@@ -22,6 +32,8 @@ const BRAND = {
   grayLight: '#F5F5F5',
   grayBorder: '#E2E2E2',
   white: '#FFFFFF',
+  green: '#1A7A4A',
+  amber: '#B45309',
 } as const;
 
 const inputStyle: React.CSSProperties = {
@@ -43,32 +55,45 @@ const FieldLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 export type AddCustomerRecordsResult =
-  | { type: 'document'; doc: CustomerDocument }
-  | { type: 'candid_contract'; doc: CustomerDocument; contract: CandidContractRecord };
+  | { type: 'document'; doc: CustomerDocument; accountUpdates?: AccountEnrichment }
+  | { type: 'candid_contract'; doc: CustomerDocument; contract: CandidContractRecord; accountUpdates?: AccountEnrichment };
 
 type Props = {
+  customer: Customer;
   customerId: string;
   locations: Location[];
   defaultLocationId: string;
   uploadedBy: string;
   onClose: () => void;
   onSave: (result: AddCustomerRecordsResult) => void;
+  /** Apply extracted fields to the account immediately (Business Information). */
+  onAccountEnriched?: (updates: AccountEnrichment) => void;
 };
 
 const newId = () => `id-${Math.random().toString(36).slice(2, 10)}`;
 
+function setIfEmpty(current: string, next: string | undefined, setter: (v: string) => void) {
+  if (next && !current.trim()) setter(next);
+}
+
 export function AddCustomerRecordsModal({
+  customer,
   customerId,
   locations,
   defaultLocationId,
   uploadedBy,
   onClose,
   onSave,
+  onAccountEnriched,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [recordKind, setRecordKind] = useState<RecordKind>('statement');
   const [locationId, setLocationId] = useState(defaultLocationId);
+  const [scanStatus, setScanStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [scanNote, setScanNote] = useState('');
+  const [accountUpdates, setAccountUpdates] = useState<AccountEnrichment | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   const [dealId, setDealId] = useState('');
   const [agentOfRecord, setAgentOfRecord] = useState('');
@@ -90,14 +115,91 @@ export function AddCustomerRecordsModal({
 
   const isCandidContract = recordKind === 'candid_contract';
 
+  const applyContractExtract = (contract: Awaited<ReturnType<typeof parseContractDocumentFromFile>>) => {
+    setIfEmpty(dealId, contract.dealId, setDealId);
+    setIfEmpty(agentOfRecord, contract.agentOfRecord ?? contract.signerName, setAgentOfRecord);
+    setIfEmpty(paySource, contract.paySource, setPaySource);
+    setIfEmpty(solution, contract.provider, setSolution);
+    setIfEmpty(product, contract.product, setProduct);
+    setIfEmpty(solutionDescription, contract.serviceDescription, setSolutionDescription);
+    if (!mrr.trim() && contract.mrr != null) setMrr(String(contract.mrr));
+    if (!mrc.trim() && contract.mrc != null) setMrc(String(contract.mrc));
+    if (!contractStartDate && contract.contractStartDate) setContractStartDate(contract.contractStartDate);
+    if (!contractEndDate && contract.contractEndDate) setContractEndDate(contract.contractEndDate);
+  };
+
+  const scanFile = async (f: File, kind: RecordKind) => {
+    setScanStatus('loading');
+    setScanNote('Scanning document and updating Business Information…');
+    setAccountUpdates(null);
+
+    try {
+      const [profile, contractExtract] = await Promise.all([
+        parseCustomerDocumentFromFile(f),
+        parseContractDocumentFromFile(f),
+      ]);
+
+      const contractLike =
+        kind === 'candid_contract' ||
+        kind === 'external_contract' ||
+        f.name.toLowerCase().includes('contract') ||
+        contractExtract.source === 'ai';
+
+      if (contractLike) {
+        applyContractExtract(contractExtract);
+      }
+
+      const enrichment = buildAccountEnrichment(customer, profile, contractExtract);
+      if (contractExtract?.agentOfRecord || contractExtract?.signerName) {
+        const signer = contractExtract.agentOfRecord ?? contractExtract.signerName;
+        if (signer && enrichment.contactUpsert && !enrichment.contactUpsert.name.trim()) {
+          enrichment.contactUpsert = { ...enrichment.contactUpsert, name: signer };
+        } else if (signer && !enrichment.contactUpsert) {
+          const primaryLoc = customer.locations.find((l) => l.isPrimary) ?? customer.locations[0];
+          enrichment.contactUpsert = {
+            id: `id-${Math.random().toString(36).slice(2, 10)}`,
+            name: signer,
+            role: 'Signer',
+            email: '',
+            phone: '',
+            isPrimary: customer.contacts.length === 0,
+            locationIds: primaryLoc ? [primaryLoc.id] : [],
+          };
+        }
+      }
+
+      setAccountUpdates(enrichment);
+      if (hasAccountEnrichment(enrichment)) {
+        onAccountEnriched?.(enrichment);
+        setScanNote(`${formatAccountEnrichmentNote(enrichment, profile)} Looking up company website for phone & description…`);
+      } else {
+        setScanNote(formatAccountEnrichmentNote(enrichment, profile));
+      }
+
+      setScanStatus('done');
+    } catch {
+      setScanStatus('error');
+      setScanNote('Could not scan this document. You can still save the record manually.');
+    }
+  };
+
   const applyFileHints = (f: File) => {
     setFile(f);
-    if (recordKind === 'candid_contract' || f.name.toLowerCase().includes('contract')) {
-      const hints = parseContractHintsFromFile(f);
-      if (hints.dealId) setDealId(hints.dealId);
-      if (hints.mrr != null) setMrr(String(hints.mrr));
-      if (hints.contractStartDate) setContractStartDate(hints.contractStartDate);
-    }
+    const kind = guessRecordKindFromFile(f);
+    setRecordKind(kind);
+    void scanFile(f, kind);
+  };
+
+  const onFileInput = (fileList: FileList | null) => {
+    const f = fileList?.[0];
+    if (f) applyFileHints(f);
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    onFileInput(e.dataTransfer.files);
   };
 
   const submit = () => {
@@ -113,6 +215,8 @@ export function AddCustomerRecordsModal({
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       size: file ? `${Math.max(1, Math.round(file.size / 1024))} KB` : '—',
     };
+
+    const updates = accountUpdates ?? undefined;
 
     if (isCandidContract) {
       const contractId = newId();
@@ -143,16 +247,19 @@ export function AddCustomerRecordsModal({
         expires: contractEndDate || '—',
         autoRenews: false,
       };
-      onSave({ type: 'candid_contract', doc: { ...doc, contractId }, contract });
+      onSave({ type: 'candid_contract', doc: { ...doc, contractId }, contract, accountUpdates: updates });
       return;
     }
 
-    onSave({ type: 'document', doc });
+    onSave({ type: 'document', doc, accountUpdates: updates });
   };
 
   function recordKindLabel() {
     return RECORD_KIND_OPTIONS.find((o) => o.value === recordKind)?.label ?? recordKind;
   }
+
+  const scanNoteColor =
+    scanStatus === 'error' ? BRAND.red : scanStatus === 'done' ? BRAND.green : BRAND.amber;
 
   return (
     <div
@@ -165,7 +272,7 @@ export function AddCustomerRecordsModal({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 600, color: BRAND.white }}>Add Customer Record</div>
-              <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>Upload a file and classify it, or enter Candid contract details</div>
+              <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2 }}>Upload a file to scan it and fill Business Information on this account right away</div>
             </div>
             <button type="button" onClick={onClose} style={{ width: 30, height: 30, background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#9CA3AF' }}>✕</button>
           </div>
@@ -197,19 +304,57 @@ export function AddCustomerRecordsModal({
 
           <div
             onClick={() => fileRef.current?.click()}
-            style={{ border: `2px dashed ${BRAND.grayBorder}`, borderRadius: 10, padding: 24, textAlign: 'center', cursor: 'pointer', marginBottom: 18, background: BRAND.grayLight }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragOver(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragOver(false);
+            }}
+            onDrop={onDrop}
+            style={{
+              border: `2px dashed ${dragOver ? BRAND.red : BRAND.grayBorder}`,
+              borderRadius: 10,
+              padding: 24,
+              textAlign: 'center',
+              cursor: 'pointer',
+              marginBottom: 12,
+              background: dragOver ? 'rgba(200,40,30,0.06)' : BRAND.grayLight,
+              transition: 'border-color 0.15s, background 0.15s',
+            }}
           >
-            <input ref={fileRef} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) applyFileHints(f); }} />
-            <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.grayDark }}>{file ? file.name : 'Drop a file or click to browse'}</div>
-            <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 4 }}>PDF, Excel, images — we&apos;ll try to extract contract fields when applicable</div>
+            <input
+              ref={fileRef}
+              type="file"
+              hidden
+              onChange={(e) => {
+                onFileInput(e.target.files);
+                e.target.value = '';
+              }}
+            />
+            <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.grayDark }}>
+              {file ? file.name : dragOver ? 'Drop file to upload' : 'Drag & drop a file here, or click to browse'}
+            </div>
+            <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 4 }}>
+              PDF or images — we scan the document, then check the company website (or email domain) for phone & description
+            </div>
           </div>
+
+          {scanStatus !== 'idle' && scanNote && (
+            <div style={{ fontSize: 12, color: scanNoteColor, marginBottom: 18, lineHeight: 1.5 }}>
+              {scanStatus === 'loading' ? '… ' : ''}{scanNote}
+            </div>
+          )}
 
           {isCandidContract && (
             <>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: BRAND.gray, marginBottom: 10 }}>Candid contract details</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div><FieldLabel>Deal ID</FieldLabel><input value={dealId} onChange={(e) => setDealId(e.target.value)} style={inputStyle} /></div>
-                <div><FieldLabel>Agent of Record</FieldLabel><input value={agentOfRecord} onChange={(e) => setAgentOfRecord(e.target.value)} style={inputStyle} /></div>
+                <div><FieldLabel>Agent of Record</FieldLabel><input value={agentOfRecord} onChange={(e) => setAgentOfRecord(e.target.value)} style={inputStyle} placeholder="Signer or sales agent" /></div>
                 <div>
                   <FieldLabel>Pay Source</FieldLabel>
                   <select value={paySource} onChange={(e) => setPaySource(e.target.value)} style={inputStyle}>

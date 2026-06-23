@@ -1,4 +1,4 @@
-# CandidPortal — Current vs Target Architecture
+# CandidIQ — Current vs Target Architecture
 
 One-page reference for onboarding (document vault, CRM persistence, integrations).
 
