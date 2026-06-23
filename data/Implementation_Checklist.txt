@@ -1,4 +1,4 @@
-CANDID PORTAL IMPLEMENTATION CHECKLIST
+CANDIDIQ IMPLEMENTATION CHECKLIST
 ================================================================================
 
 PART 1: PREPARATION (Before You Code) ........................... 30 minutes

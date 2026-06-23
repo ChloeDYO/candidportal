@@ -138,11 +138,14 @@ export interface Customer {
   companyLegal?: string;
   industry?: string;
   description?: string;
+  companyDescription?: string;
   website?: string;
   taxId?: string;
   mccCode?: string;
   corpType?: string;
   notes?: string;
+  /** From document extract — signature / execution date */
+  dateSigned?: string;
   status: CustomerStatus;
   agent: string;
   spend: number;
@@ -315,6 +318,34 @@ const LEGACY_SAMPLE_CUSTOMERS: Customer[] = [
 ];
 
 const INITIAL_CUSTOMERS: Customer[] = [];
+
+function mergeCustomerDocuments(
+  local: Record<string, CustomerDocument[]>,
+  fromServer: Record<string, CustomerDocument[]>,
+): Record<string, CustomerDocument[]> {
+  const merged = { ...fromServer };
+  for (const [customerId, docs] of Object.entries(local)) {
+    const serverDocs = fromServer[customerId] ?? [];
+    const serverIds = new Set(serverDocs.map((d) => d.id));
+    const localOnly = docs.filter((d) => !serverIds.has(d.id));
+    merged[customerId] = [...localOnly, ...serverDocs];
+  }
+  return merged;
+}
+
+function mergeCustomerContracts(
+  local: Record<string, CandidContractRecord[]>,
+  fromServer: Record<string, CandidContractRecord[]>,
+): Record<string, CandidContractRecord[]> {
+  const merged = { ...fromServer };
+  for (const [customerId, contracts] of Object.entries(local)) {
+    const serverContracts = fromServer[customerId] ?? [];
+    const serverIds = new Set(serverContracts.map((c) => c.id));
+    const localOnly = contracts.filter((c) => !serverIds.has(c.id) && !c.id.startsWith('ct-bmw-'));
+    merged[customerId] = [...localOnly, ...serverContracts];
+  }
+  return merged;
+}
 
 const CUSTOMER_FILES: Record<string, CustomerFile[]> = {
   'c-acme': [

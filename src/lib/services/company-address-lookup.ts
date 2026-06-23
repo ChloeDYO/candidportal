@@ -8,6 +8,7 @@ export type CompanyAddressLookupResult = {
   companyName?: string;
   industry?: string;
   description?: string;
+  phone?: string;
   mccCode?: string;
   mccLabel?: string;
   mccRisk?: 'low' | 'mid' | 'high';
@@ -61,7 +62,7 @@ async function fetchHtml(url: string): Promise<string | null> {
     const res = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'CandidPortal/1.0 (company address lookup)',
+        'User-Agent': 'CandidIQ/1.0 (company address lookup)',
         Accept: 'text/html,application/xhtml+xml',
       },
       redirect: 'follow',
@@ -147,7 +148,12 @@ function normalizeState(raw?: string): string | undefined {
   return s;
 }
 
-function extractFromJsonLd(html: string): { address?: PostalAddress; companyName?: string } {
+function extractFromJsonLd(html: string): {
+  address?: PostalAddress;
+  companyName?: string;
+  phone?: string;
+  description?: string;
+} {
   const blocks = parseJsonLdBlocks(html);
   for (const block of blocks) {
     for (const node of flattenJsonLd(block)) {
@@ -157,8 +163,13 @@ function extractFromJsonLd(html: string): { address?: PostalAddress; companyName
 
       const name = pickString(obj.name, obj.legalName);
       const address = readPostalAddress(obj.address);
+      const phone = pickString(obj.telephone, obj.phone);
+      const description = pickString(obj.description);
       if (address && (address.street || address.city)) {
-        return { address, companyName: name };
+        return { address, companyName: name, phone, description };
+      }
+      if (phone || description) {
+        return { companyName: name, phone, description };
       }
     }
   }
@@ -200,6 +211,7 @@ function hasLookupData(result: CompanyAddressLookupResult): boolean {
       result.zip ||
       result.industry ||
       result.description ||
+      result.phone ||
       result.mccCode ||
       result.companyName,
   );
@@ -240,7 +252,8 @@ From this website text, extract:
 1. Primary US business mailing address (headquarters or main office)
 2. A short industry label (e.g. "Dental / Healthcare", "Freight & Logistics")
 3. A very brief company description (1-2 sentences, under 200 characters)
-4. The lowest-risk MCC code that fits the merchant's primary card-processing activity
+4. Main business phone number (if listed on contact/about pages)
+5. The lowest-risk MCC code that fits the merchant's primary card-processing activity
 
 MCC rules:
 - Pick ONLY from the catalog below
@@ -259,6 +272,7 @@ Return JSON:
   "companyName": string|null,
   "industry": string|null,
   "description": string|null,
+  "phone": string|null,
   "mccCode": string|null
 }
 
@@ -286,6 +300,7 @@ ${corpus}`,
     const companyName = pickString(parsed.companyName);
     const industry = pickString(parsed.industry);
     const description = pickString(parsed.description)?.slice(0, 240);
+    const phone = pickString(parsed.phone, parsed.telephone);
     const mcc = normalizeMccCode(pickString(parsed.mccCode));
     const result: CompanyAddressLookupResult = {
       street,
@@ -295,6 +310,7 @@ ${corpus}`,
       companyName,
       industry,
       description,
+      phone,
       ...mcc,
       source: 'ai',
     };
@@ -331,6 +347,8 @@ export async function lookupCompanyAddressFromWebsite(
         state: structured.address.state,
         zip: structured.address.zip,
         companyName: structured.companyName,
+        phone: structured.phone,
+        description: structured.description,
         source: 'structured_data',
       };
       break;
@@ -348,7 +366,8 @@ export async function lookupCompanyAddressFromWebsite(
       zip: structuredResult.zip ?? aiResult.zip,
       companyName: structuredResult.companyName ?? aiResult.companyName,
       industry: aiResult.industry,
-      description: aiResult.description,
+      description: aiResult.description ?? structuredResult.description,
+      phone: aiResult.phone ?? structuredResult.phone,
       mccCode: aiResult.mccCode,
       mccLabel: aiResult.mccLabel,
       mccRisk: aiResult.mccRisk,

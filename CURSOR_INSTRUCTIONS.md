@@ -1,11 +1,11 @@
 # Cursor Instructions — Commission Processor Integration
-## CandidPortal · Commissions Tab → "Upload New" Sub-Tab
+## CandidIQ · Commissions Tab → "Upload New" Sub-Tab
 
 ---
 
 ## Overview
 
-We are integrating a pre-built React component called `CommissionProcessor` into the CandidPortal app.
+We are integrating a pre-built React component called `CommissionProcessor` into the CandidIQ app.
 It should appear in the **admin-only** area under the **Commissions** tab as the **"Upload New"** sub-tab,
 which currently exists but renders a blank view.
 
@@ -100,7 +100,7 @@ is in the `connect-src` directive.
 The component uses **inline styles only** — no Tailwind classes, no CSS modules, no global CSS.
 It is fully self-contained and will not conflict with the app's existing styles.
 
-It has its own light-blue (`#f0f4ff`) page background. If the CandidPortal app wraps page content
+It has its own light-blue (`#f0f4ff`) page background. If the CandidIQ app wraps page content
 in a container that already has a background color, you may want to remove the `minHeight: "100vh"`
 and `background: "#f0f4ff"` from the outermost `<div>` in `CommissionProcessor.jsx` so it inherits
 the portal's background instead. The relevant lines are at the top of the return statement:
@@ -138,7 +138,7 @@ After wiring up:
 | CheckCommerce processing | Unmerges, trims header/footer rows, removes trailing empty columns |
 | Vendara processing | Reorders columns to match Commissions.xlsx template, renames Expense/Recovery → Expense, appends Paramount row |
 | Output | Single `.xlsx` with three tabs: Nuvei, CheckCommerce, Vendara |
-| Database | Upserts into Supabase project `xqzerfzlisvqcgatpeyv` (CandidPortal). Conflict resolution on `(period, mid)` or `(period, merchant_mid)` — re-running same month updates rather than duplicates |
+| Database | Upserts into Supabase project `xqzerfzlisvqcgatpeyv` (CandidIQ). Conflict resolution on `(period, mid)` or `(period, merchant_mid)` — re-running same month updates rather than duplicates |
 
 ---
 

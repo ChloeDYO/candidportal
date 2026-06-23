@@ -12,6 +12,9 @@ export type ContractDocumentExtractResult = {
   contractEndDate?: string;
   paySource?: string;
   dealId?: string;
+  agentOfRecord?: string;
+  signerName?: string;
+  dateSigned?: string;
   source: 'ai' | 'filename' | 'none';
 };
 
@@ -102,6 +105,9 @@ export async function parseContractDocumentFromFile(
     contractEndDate: pickString(raw.contractEndDate),
     paySource: pickString(raw.paySource),
     dealId: pickString(raw.dealId),
+    agentOfRecord: pickString(raw.agentOfRecord, raw.signerName),
+    signerName: pickString(raw.signerName, raw.agentOfRecord),
+    dateSigned: pickString(raw.dateSigned, raw.contractStartDate),
     source: 'ai',
   };
 }

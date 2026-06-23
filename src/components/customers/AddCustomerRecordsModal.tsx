@@ -23,7 +23,13 @@ import {
   parseCustomerDocumentFromFile,
   type CustomerProfilePatch,
 } from '@/lib/customer-document-extract';
-import type { Location } from '@/components/CustomersView';
+import type { Customer, Location } from '@/components/CustomersView';
+import {
+  buildAccountEnrichment,
+  formatAccountEnrichmentNote,
+  hasAccountEnrichment,
+  type AccountEnrichment,
+} from '@/lib/customer-account-enrich';
 
 const BRAND = {
   red: '#C8281E',
@@ -55,15 +61,17 @@ const FieldLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 export type AddCustomerRecordsResult =
-  | { type: 'document'; doc: CustomerDocument; profilePatch?: CustomerProfilePatch }
+  | { type: 'document'; doc: CustomerDocument; profilePatch?: CustomerProfilePatch; accountUpdates?: AccountEnrichment }
   | {
       type: 'candid_contract';
       doc: CustomerDocument;
       contract: CandidContractRecord;
       profilePatch?: CustomerProfilePatch;
+      accountUpdates?: AccountEnrichment;
     };
 
 type Props = {
+  customer?: Customer;
   customerId: string;
   locations: Location[];
   defaultLocationId: string;
@@ -73,11 +81,13 @@ type Props = {
   primaryLocation?: Location | null;
   onClose: () => void;
   onSave: (result: AddCustomerRecordsResult) => void;
+  onAccountEnriched?: (updates: AccountEnrichment) => void;
 };
 
 const newId = () => `id-${Math.random().toString(36).slice(2, 10)}`;
 
 export function AddCustomerRecordsModal({
+  customer,
   customerId,
   locations,
   defaultLocationId,
@@ -87,6 +97,7 @@ export function AddCustomerRecordsModal({
   primaryLocation,
   onClose,
   onSave,
+  onAccountEnriched,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -114,6 +125,8 @@ export function AddCustomerRecordsModal({
   const [parsing, setParsing] = useState(false);
   const [parseNote, setParseNote] = useState('');
   const [profilePatch, setProfilePatch] = useState<CustomerProfilePatch | undefined>();
+  const [accountUpdates, setAccountUpdates] = useState<AccountEnrichment | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   const isCandidContract = recordKind === 'candid_contract';
 
@@ -135,6 +148,7 @@ export function AddCustomerRecordsModal({
     };
 
     setIfEmpty(dealId, result.dealId, setDealId);
+    setIfEmpty(agentOfRecord, result.agentOfRecord ?? result.signerName, setAgentOfRecord);
     setIfEmpty(paySource, result.paySource, setPaySource);
     setIfEmpty(solution, result.provider, setSolution);
     setIfEmpty(product, result.product, setProduct);
@@ -152,6 +166,7 @@ export function AddCustomerRecordsModal({
     setFile(f);
     setParseNote('');
     setProfilePatch(undefined);
+    setAccountUpdates(null);
 
     const guessedKind = guessRecordKindFromFile(f);
     const looksLikeContract =
@@ -169,6 +184,7 @@ export function AddCustomerRecordsModal({
 
     setParsing(true);
     const notes: string[] = [];
+    let contractExtract: ContractDocumentExtractResult | null = null;
     try {
       if (canParseDocument) {
         try {
@@ -183,6 +199,42 @@ export function AddCustomerRecordsModal({
             const profileNote = describeCustomerProfilePatch(patch);
             if (profileNote) notes.push(profileNote);
           }
+
+          if (customer) {
+            if (!contractExtract && shouldParseContract) {
+              contractExtract = await parseContractDocumentFromFile(f);
+            }
+            const enrichment = buildAccountEnrichment(
+              customer,
+              customerResult,
+              contractExtract ?? undefined,
+            );
+            if (contractExtract?.agentOfRecord || contractExtract?.signerName) {
+              const signer = contractExtract.agentOfRecord ?? contractExtract.signerName;
+              if (signer && enrichment.contactUpsert && !enrichment.contactUpsert.name.trim()) {
+                enrichment.contactUpsert = { ...enrichment.contactUpsert, name: signer };
+              } else if (signer && !enrichment.contactUpsert) {
+                const primaryLoc = customer.locations.find((l) => l.isPrimary) ?? customer.locations[0];
+                enrichment.contactUpsert = {
+                  id: newId(),
+                  name: signer,
+                  role: 'Signer',
+                  email: '',
+                  phone: '',
+                  isPrimary: customer.contacts.length === 0,
+                  locationIds: primaryLoc ? [primaryLoc.id] : [],
+                };
+              }
+            }
+            setAccountUpdates(enrichment);
+            if (hasAccountEnrichment(enrichment)) {
+              onAccountEnriched?.(enrichment);
+              const enrichNote = formatAccountEnrichmentNote(enrichment, customerResult);
+              if (enrichNote) {
+                notes.push(`${enrichNote} Looking up company website for phone & description…`);
+              }
+            }
+          }
         } catch (err) {
           notes.push(err instanceof Error ? err.message : 'Could not read company profile from document.');
         }
@@ -190,7 +242,8 @@ export function AddCustomerRecordsModal({
 
       if (shouldParseContract) {
         try {
-          const result = await parseContractDocumentFromFile(f);
+          const result = contractExtract ?? (await parseContractDocumentFromFile(f));
+          contractExtract = result;
           applyContractExtract(result);
           if (result.source === 'ai') {
             notes.push('Contract fields prefilled from document — please verify before saving.');
@@ -225,6 +278,8 @@ export function AddCustomerRecordsModal({
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       size: file ? `${Math.max(1, Math.round(file.size / 1024))} KB` : '—',
     };
+
+    const updates = accountUpdates ?? undefined;
 
     if (isCandidContract) {
       const contractId = newId();
@@ -262,11 +317,11 @@ export function AddCustomerRecordsModal({
         expires: contractEndDate || '—',
         autoRenews: false,
       };
-      onSave({ type: 'candid_contract', doc: { ...doc, contractId }, contract, profilePatch });
+      onSave({ type: 'candid_contract', doc: { ...doc, contractId }, contract, profilePatch, accountUpdates: updates });
       return;
     }
 
-    onSave({ type: 'document', doc, profilePatch });
+    onSave({ type: 'document', doc, profilePatch, accountUpdates: updates });
   };
 
   function recordKindLabel() {
@@ -326,14 +381,49 @@ export function AddCustomerRecordsModal({
 
           <div
             onClick={() => fileRef.current?.click()}
-            style={{ border: `2px dashed ${BRAND.grayBorder}`, borderRadius: 10, padding: 24, textAlign: 'center', cursor: 'pointer', marginBottom: 18, background: BRAND.grayLight }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragOver(true);
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragOver(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragOver(false);
+              const f = e.dataTransfer.files?.[0];
+              if (f) void handleFile(f);
+            }}
+            style={{
+              border: `2px dashed ${dragOver ? BRAND.red : BRAND.grayBorder}`,
+              borderRadius: 10,
+              padding: 24,
+              textAlign: 'center',
+              cursor: 'pointer',
+              marginBottom: 18,
+              background: dragOver ? 'rgba(200,40,30,0.06)' : BRAND.grayLight,
+              transition: 'border-color 0.15s, background 0.15s',
+            }}
           >
-            <input ref={fileRef} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
+            <input
+              ref={fileRef}
+              type="file"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleFile(f);
+                e.target.value = '';
+              }}
+            />
             <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.grayDark }}>
-              {parsing ? 'Reading document…' : file ? file.name : 'Drop a file or click to browse'}
+              {parsing ? 'Reading document…' : file ? file.name : dragOver ? 'Drop file to upload' : 'Drag & drop a file here, or click to browse'}
             </div>
             <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 4 }}>
-              PDF or image — AI will extract contract and profile fields when applicable
+              PDF or image — AI extracts contract and profile fields; we also check the company website for phone & description
             </div>
             {parseNote && (
               <div style={{ fontSize: 11, color: parseNote.includes('prefilled') || parseNote.includes('Will update') ? '#1A7A4A' : BRAND.gray, marginTop: 8 }}>

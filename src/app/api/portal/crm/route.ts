@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const data = await loadCrmCustomerSlice(customerId);
+    const data = await loadCrmCustomerSlice(customerId, supabase);
     if (!data) {
       return NextResponse.json({ error: 'Customer not found' }, { status: 404 });
     }

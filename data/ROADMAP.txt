@@ -1,4 +1,4 @@
-CANDID PORTAL - FILES & WORKFLOW ROADMAP
+CANDIDIQ - FILES & WORKFLOW ROADMAP
 ================================================================================
 
 YOUR DOCUMENTATION PACKAGE:
@@ -69,7 +69,7 @@ WORKFLOW TIMELINE:
 │       ↓                                                         │
 │  20 minutes    Test everything (follow checklist)               │
 │       ↓                                                         │
-│      ✅ DONE! Candid Portal is live                            │
+│      ✅ DONE! CandidIQ is live                            │
 │                                                                 │
 │  Total time: 6-8 hours (one person, one day of work)          │
 │                                                                 │
@@ -81,7 +81,7 @@ WHAT YOU'RE BUILDING:
 
 ┌─────────────────────────────────────────────────────────────────┐
 │                                                                 │
-│                    CANDID PORTAL (Your Portal)                 │
+│                    CANDIDIQ (Your Portal)                 │
 │                                                                 │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │ Supabase Database (7 Tables)                            │   │

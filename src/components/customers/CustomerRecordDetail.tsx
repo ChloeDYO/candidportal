@@ -10,6 +10,13 @@ import {
   type CustomerDocument,
   type DealStatus,
 } from '@/lib/customer-records';
+import { buildAccountEnrichment, type AccountEnrichment } from '@/lib/customer-account-enrich';
+import {
+  buildEnrichmentFromWebsiteLookup,
+  fetchWebsiteEnrichment,
+  mergeAccountSnapshot,
+  resolveLookupWebsite,
+} from '@/lib/enrich-account-from-web';
 import { AddCustomerRecordsModal, type AddCustomerRecordsResult } from '@/components/customers/AddCustomerRecordsModal';
 import EditContractModal from '@/components/customers/EditContractModal';
 import { contractServiceTitle } from '@/lib/customer-contracts-from-deals';
@@ -141,6 +148,13 @@ export type CustomerRecordDetailProps = {
   analysisReviews?: BillAnalysisReviewRow[];
   onOpenAnalysisReview?: (reviewId: string) => void;
 };
+
+function formatSignedDate(iso?: string): string | undefined {
+  if (!iso?.trim()) return undefined;
+  const d = new Date(`${iso.trim()}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
 
 export function CustomerRecordDetail({
   customer: c,
@@ -321,9 +335,51 @@ export function CustomerRecordDetail({
   const recordLocationId = primaryLocId || c.locations[0]?.id || '';
 
   const selectedLocation = selectedLocationId ? c.locations.find((l) => l.id === selectedLocationId) : null;
+  const modalDefaultLocationId = selectedLocation?.id || recordLocationId;
+
+  const applyAccountEnrichment = (updates?: AccountEnrichment) => {
+    if (!updates) return;
+    if (Object.keys(updates.customerPatch).length) {
+      onUpdateCustomer(updates.customerPatch);
+    }
+    if (updates.contactUpsert) {
+      onUpsertContact(updates.contactUpsert as Contact);
+    }
+    if (updates.locationPatch) {
+      const existing = c.locations.find((l) => l.id === updates.locationPatch!.id);
+      if (existing) {
+        onUpsertLocation({ ...existing, ...updates.locationPatch.patch });
+      }
+    }
+  };
+
+  const enrichAccountFromDocument = (updates: AccountEnrichment) => {
+    applyAccountEnrichment(updates);
+
+    void (async () => {
+      const afterDoc = mergeAccountSnapshot(c, updates);
+      const lookupWebsite = resolveLookupWebsite(afterDoc, {
+        website: afterDoc.website,
+        contactEmail: afterDoc.contacts.find((ct) => ct.isPrimary)?.email ?? updates.contactUpsert?.email,
+      });
+      if (!lookupWebsite) return;
+
+      try {
+        const lookup = await fetchWebsiteEnrichment(lookupWebsite);
+        if (!lookup) return;
+        const webEnrichment = buildEnrichmentFromWebsiteLookup(afterDoc, lookup, lookupWebsite);
+        applyAccountEnrichment(webEnrichment);
+      } catch {
+        // Website lookup is best-effort after document scan.
+      }
+    })();
+  };
 
   const handleAddRecord = async (result: AddCustomerRecordsResult) => {
     try {
+      if (result.accountUpdates) {
+        applyAccountEnrichment(result.accountUpdates);
+      }
       if (result.profilePatch) {
         const p = result.profilePatch;
         const customerPatch: Partial<Customer> = {};
@@ -379,11 +435,42 @@ export function CustomerRecordDetail({
     return BRAND.gray;
   };
 
+  const recordOverlays = (
+    <>
+      {addRecordsOpen && modalDefaultLocationId && (
+        <AddCustomerRecordsModal
+          customer={c}
+          customerId={c.id}
+          locations={c.locations}
+          defaultLocationId={modalDefaultLocationId}
+          uploadedBy={uploadedBy}
+          customerWebsite={c.website}
+          customerMccCode={c.mccCode}
+          primaryLocation={primaryLoc ?? null}
+          onClose={() => setAddRecordsOpen(false)}
+          onSave={handleAddRecord}
+          onAccountEnriched={enrichAccountFromDocument}
+        />
+      )}
+
+      {selectedContact && (
+        <ContactDetailModal
+          contact={selectedContact}
+          company={c.company}
+          onClose={() => setSelectedContact(null)}
+          onEdit={() => { setSelectedContact(null); onEditContact(selectedContact); }}
+          onViewAsContact={onViewAsContact}
+        />
+      )}
+    </>
+  );
+
   if (selectedLocation) {
     const locDocs = documents.filter((d) => d.locationId === selectedLocation.id);
     const locContracts = contracts.filter((ct) => ct.locationId === selectedLocation.id);
 
     return (
+      <>
       <div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           <button type="button" onClick={() => setSelectedLocationId(null)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: BRAND.white, border: `1px solid ${BRAND.grayBorder}`, borderRadius: 6, padding: '8px 14px', fontSize: 13, cursor: 'pointer' }}>
@@ -441,10 +528,13 @@ export function CustomerRecordDetail({
           <MiniDocTable docs={locDocs} locations={c.locations} showLocation={false} onEdit={onEditDocument} />
         </ScrollSection>
       </div>
+      {recordOverlays}
+    </>
     );
   }
 
   return (
+    <>
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0, maxHeight: 'calc(100vh - 100px)' }}>
       <div
         style={{
@@ -528,15 +618,16 @@ export function CustomerRecordDetail({
             <InfoField label="Legal Name" value={c.companyLegal} />
             <InfoField label="Industry" value={c.industry} />
             <InfoField label="Website" value={c.website ? c.website.replace(/^https?:\/\//, '') : undefined} />
-            {c.description && (
-              <div style={{ gridColumn: '1 / -1' }}>
-                <InfoField label="Description" value={c.description} />
-              </div>
-            )}
+            <InfoField label="Description" value={c.description} />
+            <InfoField label="Company Description" value={c.companyDescription} />
             <InfoField label="Tax ID / EIN" value={c.taxId} />
             <InfoField label="MCC Code" value={c.mccCode} />
             <InfoField label="Corp Type" value={c.corpType} />
             <InfoField label="Primary Address" value={formatLocation(primaryLoc)} />
+            <InfoField label="Signer Name" value={primaryCt?.name} />
+            <InfoField label="Signer Email" value={primaryCt?.email} />
+            <InfoField label="Signer Phone" value={primaryCt?.phone} />
+            <InfoField label="Date Signed" value={formatSignedDate(c.dateSigned)} />
             <InfoField label="Sales Agent" value={c.agent} />
             <InfoField label="Member Since" value={c.since} />
             {c.portal?.totalCandidMrc != null && c.portal.totalCandidMrc > 0 && (
@@ -745,31 +836,10 @@ export function CustomerRecordDetail({
           <MiniDocTable docs={filteredDocs} locations={c.locations} showLocation={docSearching} onEdit={onEditDocument} />
         </ScrollSection>
       </div>
-
-      {addRecordsOpen && recordLocationId && (
-        <AddCustomerRecordsModal
-          customerId={c.id}
-          locations={c.locations}
-          defaultLocationId={recordLocationId}
-          uploadedBy={uploadedBy}
-          customerWebsite={c.website}
-          customerMccCode={c.mccCode}
-          primaryLocation={primaryLoc ?? null}
-          onClose={() => setAddRecordsOpen(false)}
-          onSave={handleAddRecord}
-        />
-      )}
-
-      {selectedContact && (
-        <ContactDetailModal
-          contact={selectedContact}
-          company={c.company}
-          onClose={() => setSelectedContact(null)}
-          onEdit={() => { setSelectedContact(null); onEditContact(selectedContact); }}
-          onViewAsContact={onViewAsContact}
-        />
-      )}
     </div>
+
+      {recordOverlays}
+    </>
   );
 }
 

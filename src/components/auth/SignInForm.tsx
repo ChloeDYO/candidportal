@@ -7,7 +7,13 @@ import { sendMagicLinkSignIn } from '@/lib/auth/magic-link';
 
 type SignInMode = 'password' | 'magic';
 
-export function SignInForm({ initialError }: { initialError?: string }) {
+export function SignInForm({
+  initialError,
+  nextPath = '/app',
+}: {
+  initialError?: string;
+  nextPath?: string;
+}) {
   const router = useRouter();
   const [mode, setMode] = useState<SignInMode>('magic');
   const [email, setEmail] = useState('');
@@ -30,7 +36,7 @@ export function SignInForm({ initialError }: { initialError?: string }) {
     setLoading(true);
 
     if (mode === 'magic') {
-      const result = await sendMagicLinkSignIn(trimmed);
+      const result = await sendMagicLinkSignIn(trimmed, { next: nextPath });
       setLoading(false);
       if (!result.ok) {
         setError(result.message);
@@ -52,7 +58,7 @@ export function SignInForm({ initialError }: { initialError?: string }) {
       return;
     }
 
-    router.push('/app');
+    router.push(nextPath);
     router.refresh();
   };
 

@@ -20,6 +20,7 @@ export type CustomerDocumentExtractResult = {
   contactEmail?: string;
   contactPhone?: string;
   contactRole?: string;
+  dateSigned?: string;
   source: 'ai' | 'filename' | 'none';
 };
 

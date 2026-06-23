@@ -25,7 +25,8 @@ Return ONLY a valid JSON object — no markdown, no backticks, no extra text.
   "contactName": string|null,
   "contactEmail": string|null,
   "contactPhone": string|null,
-  "contactRole": string|null
+  "contactRole": string|null,
+  "dateSigned": string|null
 }
 
 Rules:
@@ -36,6 +37,7 @@ Rules:
 - description: one short sentence about what the business does (under 200 characters).
 - corpType: LLC, S-Corp, C-Corp, Sole Proprietorship, Partnership, Non-Profit, or Other when stated.
 - contact fields: primary signer, owner, or billing contact when identifiable.
+- dateSigned: contract or agreement signature date as ISO YYYY-MM-DD when visible.
 - Return null for any field you cannot verify from the document. Do not invent data.`;
 
 const CONTRACT_EXTRACTION_PROMPT = `You analyze telecom / IT service contracts and order forms (Comcast, RingCentral, Microsoft, merchant processing, etc.) and extract contract fields for a CRM.
@@ -51,7 +53,10 @@ Return ONLY a valid JSON object — no markdown, no backticks, no extra text.
   "contractStartDate": string|null,
   "contractEndDate": string|null,
   "paySource": string|null,
-  "dealId": string|null
+  "dealId": string|null,
+  "agentOfRecord": string|null,
+  "signerName": string|null,
+  "dateSigned": string|null
 }
 
 Rules:
@@ -62,6 +67,8 @@ Rules:
 - contractStartDate / contractEndDate: ISO YYYY-MM-DD when visible.
 - paySource: master agent or channel if stated (Sandler, Telarus, etc.).
 - dealId: account number, order ID, or deal UID when visible.
+- agentOfRecord / signerName: sales agent or person who signed the contract when named.
+- dateSigned: signature or execution date as ISO YYYY-MM-DD when visible (prefer over contract start when both appear).
 - Return null for fields you cannot verify. Do not invent data.`;
 
 function pickString(...values: unknown[]): string | undefined {
@@ -95,6 +102,7 @@ function parseResult(raw: Record<string, unknown>): CustomerDocumentExtractResul
     contactEmail: pickString(raw.contactEmail),
     contactPhone: pickString(raw.contactPhone),
     contactRole: pickString(raw.contactRole),
+    dateSigned: pickString(raw.dateSigned),
     source: 'ai',
   };
 }
@@ -132,6 +140,9 @@ function parseContractResult(raw: Record<string, unknown>) {
     contractEndDate: pickString(raw.contractEndDate),
     paySource: pickString(raw.paySource),
     dealId: pickString(raw.dealId),
+    agentOfRecord: pickString(raw.agentOfRecord, raw.signerName),
+    signerName: pickString(raw.signerName, raw.agentOfRecord),
+    dateSigned: pickString(raw.dateSigned, raw.contractStartDate),
   };
 }
 

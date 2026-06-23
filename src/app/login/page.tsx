@@ -3,19 +3,27 @@ import { redirect } from "next/navigation";
 import { SignInForm } from "@/components/auth/SignInForm";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+function safeNextPath(next?: string | null): string {
+  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/app";
+  return next;
+}
+
 export default async function LoginPage({
-  searchParams
+  searchParams,
 }: {
-  searchParams?: Promise<{ error?: string }>;
+  searchParams?: Promise<{ error?: string; next?: string }>;
 }) {
+  const params = await searchParams;
+  const next = safeNextPath(params?.next);
+
   const supabase = await createSupabaseServerClient();
   const {
-    data: { user }
+    data: { user },
   } = await supabase.auth.getUser();
 
-  if (user) redirect("/app");
+  if (user) redirect(next);
 
-  const error = (await searchParams)?.error;
+  const error = params?.error;
 
   return (
     <main>
@@ -33,7 +41,7 @@ export default async function LoginPage({
           Sign in with a one-time email link or your password.
         </p>
 
-        <SignInForm initialError={error} />
+        <SignInForm initialError={error} nextPath={next} />
 
         <div style={{ marginTop: 12, fontSize: 13, color: "#6b6b6b" }}>
           Use the email address your Candid account manager enabled for portal access.

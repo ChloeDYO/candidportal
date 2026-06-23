@@ -1,5 +1,6 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Customer } from '@/components/CustomersView';
-import { createSupabaseAdminClient } from '@/lib/supabase/admin';
+import { createCrmReadClient } from '@/lib/supabase/crm-read-client';
 import {
   dealRowToContract,
   recordRowToDocument,
@@ -22,10 +23,13 @@ export type CrmBootstrap = CrmRuntimeData & {
   customerCount: number;
 };
 
-export async function loadCrmCustomerSlice(externalId: string): Promise<CrmBootstrap | null> {
-  const admin = createSupabaseAdminClient();
+export async function loadCrmCustomerSlice(
+  externalId: string,
+  client?: SupabaseClient,
+): Promise<CrmBootstrap | null> {
+  const db = client ?? (await createCrmReadClient());
 
-  const { data: customerRow, error: customerError } = await admin
+  const { data: customerRow, error: customerError } = await db
     .from('customers')
     .select('*')
     .eq('external_id', externalId)
@@ -42,10 +46,10 @@ export async function loadCrmCustomerSlice(externalId: string): Promise<CrmBoots
     { data: dealRows, error: dealError },
     { data: recordRows, error: recordError },
   ] = await Promise.all([
-    admin.from('customer_locations').select('*').eq('customer_id', customerUuid),
-    admin.from('customer_contacts').select('*').eq('customer_id', customerUuid),
-    admin.from('deals').select('*').eq('customer_id', customerUuid),
-    admin.from('customer_records').select('*').eq('customer_id', customerUuid),
+    db.from('customer_locations').select('*').eq('customer_id', customerUuid),
+    db.from('customer_contacts').select('*').eq('customer_id', customerUuid),
+    db.from('deals').select('*').eq('customer_id', customerUuid),
+    db.from('customer_records').select('*').eq('customer_id', customerUuid),
   ]);
 
   if (locationError) throw new Error(locationError.message);
@@ -75,10 +79,10 @@ export async function loadCrmCustomerSlice(externalId: string): Promise<CrmBoots
   };
 }
 
-export async function loadCrmFromDatabase(): Promise<CrmBootstrap | null> {
-  const admin = createSupabaseAdminClient();
+export async function loadCrmFromDatabase(client?: SupabaseClient): Promise<CrmBootstrap | null> {
+  const db = client ?? (await createCrmReadClient());
 
-  const { data: customerRows, error: customerError } = await admin
+  const { data: customerRows, error: customerError } = await db
     .from('customers')
     .select('*')
     .order('company');
@@ -86,23 +90,23 @@ export async function loadCrmFromDatabase(): Promise<CrmBootstrap | null> {
   if (customerError) throw new Error(customerError.message);
   if (!customerRows?.length) return null;
 
-  const { data: locationRows, error: locationError } = await admin
+  const { data: locationRows, error: locationError } = await db
     .from('customer_locations')
     .select('*');
 
   if (locationError) throw new Error(locationError.message);
 
-  const { data: contactRows, error: contactError } = await admin
+  const { data: contactRows, error: contactError } = await db
     .from('customer_contacts')
     .select('*');
 
   if (contactError) throw new Error(contactError.message);
 
-  const { data: dealRows, error: dealError } = await admin.from('deals').select('*');
+  const { data: dealRows, error: dealError } = await db.from('deals').select('*');
 
   if (dealError) throw new Error(dealError.message);
 
-  const { data: recordRows, error: recordError } = await admin
+  const { data: recordRows, error: recordError } = await db
     .from('customer_records')
     .select('*');
 
@@ -137,8 +141,8 @@ export async function loadCrmFromDatabase(): Promise<CrmBootstrap | null> {
   customers.sort((a, b) => a.company.localeCompare(b.company));
 
   const [bmwDeals, agentRates] = await Promise.all([
-    loadBmwDealsFromDatabase(),
-    loadBmwAgentRatesFromDatabase(),
+    loadBmwDealsFromDatabase(db),
+    loadBmwAgentRatesFromDatabase(db),
   ]);
 
   return {
@@ -164,9 +168,12 @@ function groupBy<T extends Record<string, unknown>>(rows: T[], key: keyof T): Ma
   return map;
 }
 
-export async function getCrmCustomerUuid(externalId: string): Promise<string | null> {
-  const admin = createSupabaseAdminClient();
-  const { data, error } = await admin
+export async function getCrmCustomerUuid(
+  externalId: string,
+  client?: SupabaseClient,
+): Promise<string | null> {
+  const db = client ?? (await createCrmReadClient());
+  const { data, error } = await db
     .from('customers')
     .select('id')
     .eq('external_id', externalId)
